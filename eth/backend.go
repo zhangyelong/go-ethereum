@@ -101,7 +101,7 @@ func (s *Ethereum) AddLesServer(ls LesServer) {
 
 // New creates a new Ethereum object (including the
 // initialisation of the common Ethereum object)
-func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
+func New(ctx *node.ServiceContext, config *Config, pending miner.Pending) (*Ethereum, error) {
 	if config.SyncMode == downloader.LightSync {
 		return nil, errors.New("can't run eth.Ethereum in light sync mode, use les.LightEthereum")
 	}
@@ -166,14 +166,19 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 	if eth.protocolManager, err = NewProtocolManager(eth.chainConfig, config.SyncMode, config.NetworkId, eth.eventMux, eth.txPool, eth.engine, eth.blockchain, chainDb); err != nil {
 		return nil, err
 	}
-	eth.miner = miner.New(eth, eth.chainConfig, eth.EventMux(), eth.engine)
-	eth.miner.SetExtra(makeExtraData(config.ExtraData))
 
-	eth.ApiBackend = &EthApiBackend{eth, nil}
+	if pending == nil {
+		eth.miner = miner.New(eth, eth.chainConfig, eth.EventMux(), eth.engine)
+		eth.miner.SetExtra(makeExtraData(config.ExtraData))
+		pending = eth.miner
+	}
+
+	eth.ApiBackend = &EthApiBackend{eth, nil, pending}
 	gpoParams := config.GPO
 	if gpoParams.Default == nil {
 		gpoParams.Default = config.GasPrice
 	}
+
 	eth.ApiBackend.gpo = gasprice.NewOracle(eth.ApiBackend, gpoParams)
 
 	return eth, nil
@@ -406,7 +411,10 @@ func (s *Ethereum) Stop() error {
 		s.lesServer.Stop()
 	}
 	s.txPool.Stop()
-	s.miner.Stop()
+
+	if s.miner != nil {
+		s.miner.Stop()
+	}
 	s.eventMux.Stop()
 
 	s.chainDb.Close()
